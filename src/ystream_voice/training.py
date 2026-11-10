@@ -328,7 +328,7 @@ def train(t3, train_set: list[Example], val_set: list[Example], config: TrainCon
             optimizer.step()
             scheduler.step()
             step += 1
-            running.append(float(speech_loss))
+            running.append(float(speech_loss.detach()))
             if step % config.eval_every == 0 or step == config.steps:
                 val = evaluate(t3, val_set, pool, config.batch_tokens)
                 train_loss = sum(running) / len(running)
