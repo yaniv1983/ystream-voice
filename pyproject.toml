@@ -21,7 +21,7 @@ dependencies = [
     "torchaudio>=2.9.0; python_version >= '3.14'",
     "transformers==5.2.0",
     "diffusers==0.29.0",
-    "resemble-perth @ git+https://github.com/resemble-ai/Perth.git@master",
+    "resemble-perth @ git+https://github.com/resemble-ai/Perth.git@ff1c8ac55a976971245cdd53c18d6131ca00d993",
     "conformer==0.3.2",
     "safetensors==0.5.3",
     "spacy-pkuseg",
@@ -31,9 +31,19 @@ dependencies = [
     "omegaconf"
 ]
 
+[project.optional-dependencies]
+# Hebrew needs a diacritizer (niqqud). Requires Python 3.11+.
+hebrew = ["dicta-onnx>=1.0.9"]
+dev = ["pytest"]
+
 [project.urls]
-Homepage = "https://github.com/resemble-ai/chatterbox"
-Repository = "https://github.com/resemble-ai/chatterbox"
+Homepage = "https://github.com/yaniv1983/ystream-voice"
+Repository = "https://github.com/yaniv1983/ystream-voice"
+Upstream = "https://github.com/resemble-ai/chatterbox"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 [build-system]
 requires = ["setuptools>=61.0"]

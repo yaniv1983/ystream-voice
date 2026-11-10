@@ -58,7 +58,6 @@ REPO_ID = "ResembleAI/chatterbox"
 
 # Global instances for optional dependencies
 _kakasi = None
-_dicta = None
 _russian_stresser = None
 
 
@@ -115,22 +114,14 @@ def hiragana_normalize(text: str) -> str:
 
 
 def add_hebrew_diacritics(text: str) -> str:
-    """Hebrew text normalization: adds diacritics to Hebrew text."""
-    global _dicta
-    
-    try:
-        if _dicta is None:
-            from dicta_onnx import Dicta
-            _dicta = Dicta()
-        
-        return _dicta.add_diacritics(text)
-        
-    except ImportError:
-        logger.warning("dicta_onnx not available - Hebrew text processing skipped")
-        return text
-    except Exception as e:
-        logger.warning(f"Hebrew diacritization failed: {e}")
-        return text
+    """Hebrew text normalization: adds niqqud (vowel marks) to Hebrew text.
+
+    Raises `HebrewDiacritizerUnavailable` when the diacritizer cannot be loaded:
+    without niqqud the model produces unintelligible Hebrew, so failing is safer
+    than speaking. Set YSTREAM_ALLOW_BARE_HEBREW=1 to get the old pass-through.
+    """
+    from ystream_voice.hebrew import add_niqqud
+    return add_niqqud(text)
 
 
 def korean_normalize(text: str) -> str:
@@ -283,6 +274,12 @@ class MTLTokenizer:
         return text_tokens
 
     def encode(self, txt: str, language_id: str = None, lowercase: bool = True, nfkd_normalize: bool = True):
+        if language_id == 'he':
+            # NFKD reorders Hebrew vowel marks. Text that already carries niqqud
+            # (pre-diacritized, or a pronunciation override) must keep its order.
+            from ystream_voice.hebrew import has_niqqud
+            if has_niqqud(txt):
+                nfkd_normalize = False
         txt = self.preprocess_text(txt, language_id=language_id, lowercase=lowercase, nfkd_normalize=nfkd_normalize)
         
         # Language-specific text processing

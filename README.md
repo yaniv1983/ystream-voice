@@ -1,3 +1,30 @@
+# yStream Voice
+
+A maintained fork of [Chatterbox](https://github.com/resemble-ai/chatterbox) (retired upstream in August 2026) aimed at radio hosting in **English and Hebrew**: voice cloning that runs on your own GPU, with scripts written the way radio people write them.
+
+**Status: early.** What works today, on top of the original models:
+
+- **Hebrew is fixed.** Upstream silently skipped the vowel-marking (niqqud) step, which made Hebrew unintelligible. It now runs, and fails with a clear error instead of speaking gibberish. Install with `pip install -e ".[hebrew]"`.
+- **Radio text handling** in both languages: clock times, FM frequencies, years, percentages, large numbers.
+- **Script tags**: `[pause:0.6s]`, `[excited]`, `[calm]`, `[fast]`, `[slow]`, `[pace:1.2]`, `[energy:high]`, `[whisper]`. Pace and energy are approximate until the model is trained for them. `[laugh]`, `[breath]` and other sound tags are parsed but silent for now.
+- **Long scripts**: text is cut into chunks the model handles reliably and joined back together.
+- **Pronunciation override**: `{{Tiesto|טִיֶסְטוֹ}}` speaks the second form exactly.
+
+Planned (needs training): native 48 kHz output, mixed Hebrew/English in one sentence, real laugh/breath sounds, exact pace and energy control. See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+Try it:
+
+```bash
+pip install -e ".[hebrew]"
+python scripts/try_voice.py --voice my_voice.wav --text "[excited] בוקר טוב! השעה 7:30. [pause:0.4s] [calm] נשארים איתנו."
+```
+
+Run the tests (no GPU needed): `pip install pytest && pytest`
+
+The original Chatterbox README follows.
+
+---
+
 ![Chatterbox Multilingual Image](./Chatterbox-Multilingual.png)
 
 
