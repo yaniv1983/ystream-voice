@@ -6,7 +6,8 @@ Goal: a Chatterbox that a station owner can clone their voice into (10-30 minute
 |---|---|---|---|
 | 0 | Fork, tests, baseline recordings of how upstream sounds | No | In progress |
 | 1 | Hebrew niqqud fix, radio text normaliser, script tags, long-form rendering | No | Code written; needs listening tests on a GPU |
-| 1b | Automatic bad-take detection (Whisper), loudness mastering, half-precision mode for 8 GB cards | No | Next |
+| 1b | Automatic bad-take detection (Whisper) and loudness mastering | No | Code written; needs listening tests on a GPU |
+| 1c | Half-precision mode for 8 GB cards | No | Next |
 | 2 | Data pipeline and training harness; 48 kHz vocoder replacing the 24 kHz one | Yes | Planned |
 | 3 | Hebrew quality and mixed Hebrew/English fine-tune; per-voice add-on from 10-30 minutes | Yes | Planned |
 | 4 | Real `[laugh]`/`[breath]` sounds; exact pace, energy and pitch control; `[fit]` to a target length | Yes | Planned |

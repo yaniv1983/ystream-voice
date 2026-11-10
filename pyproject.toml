@@ -34,6 +34,8 @@ dependencies = [
 [project.optional-dependencies]
 # Hebrew needs a diacritizer (niqqud). Requires Python 3.11+.
 hebrew = ["dicta-onnx>=1.0.9"]
+# Automatic bad-take detection with Whisper.
+verify = ["faster-whisper"]
 dev = ["pytest"]
 
 [project.urls]

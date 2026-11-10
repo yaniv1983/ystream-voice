@@ -14,7 +14,7 @@ from typing import Callable
 
 import numpy as np
 
-from .hebrew import add_niqqud
+from .hebrew import add_niqqud, spoken_form, written_form
 from .normalize import detect_language, normalize_text
 from .tags import Script, Segment, Style, parse_script
 
@@ -121,13 +121,17 @@ class RadioHost:
 
     # -- text ---------------------------------------------------------------
     def prepare_text(self, segment: Segment, lang: str) -> str:
+        """Tags handled and numbers spelled out; still plain text without niqqud."""
         text = segment.text if self.supports_events else segment.text_without_events()
-        text = normalize_text(text, lang)
-        if lang == "he":
-            # Done here (not only in the tokenizer) so a missing diacritizer stops
-            # the render before any audio is produced.
-            text = add_niqqud(text)
-        return text
+        return normalize_text(text, lang)
+
+    def spoken_text(self, chunk: str, lang: str) -> str:
+        """What the model receives: overrides applied, Hebrew with niqqud.
+
+        Done here (not only in the tokenizer) so a missing diacritizer stops the
+        render before any audio is produced.
+        """
+        return add_niqqud(chunk) if lang == "he" else spoken_form(chunk)
 
     # -- audio --------------------------------------------------------------
     def _silence(self, seconds: float) -> np.ndarray:
@@ -138,8 +142,12 @@ class RadioHost:
         if self.voice:
             kwargs["audio_prompt_path"] = self.voice
         wav = None
+        spoken = self.spoken_text(text, lang)
+        # Takes are checked against the plain spelling: a recogniser writes Hebrew
+        # without niqqud, and with the usual spelling of an overridden name.
+        text = written_form(text)
         for attempt in range(self.max_retries + 1):
-            out = self.model.generate(text, language_id=lang, **kwargs)
+            out = self.model.generate(spoken, language_id=lang, **kwargs)
             out = out.detach().cpu().numpy() if hasattr(out, "detach") else np.asarray(out)
             wav = out.reshape(-1).astype(np.float32)
             if self.check is None or self.check(wav, self.sr, text, lang):

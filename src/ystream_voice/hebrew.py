@@ -31,6 +31,16 @@ _OVERRIDE = re.compile(r"\{\{([^|{}]*)\|([^|{}]*)\}\}")
 _dicta = None
 
 
+def written_form(text: str) -> str:
+    """`{{written|spoken}}` -> written. What a listener would transcribe."""
+    return _OVERRIDE.sub(lambda m: m.group(1), text)
+
+
+def spoken_form(text: str) -> str:
+    """`{{written|spoken}}` -> spoken. What the model should read."""
+    return _OVERRIDE.sub(lambda m: m.group(2), text)
+
+
 class HebrewDiacritizerUnavailable(RuntimeError):
     pass
 

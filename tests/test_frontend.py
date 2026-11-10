@@ -155,3 +155,12 @@ def test_radio_host_keeps_events_when_model_supports_them():
     model = FakeModel()
     RadioHost(model, supports_events=True).render("Hello [laugh] there.")
     assert model.calls[0][0] == "Hello [laugh] there."
+
+
+def test_radio_host_speaks_override_but_checks_written_form():
+    model = FakeModel()
+    seen = []
+    host = RadioHost(model, check=lambda wav, sr, text, lang: seen.append(text) or True)
+    host.render("Next up, {{Tiësto|Tee-esto}} live at 9:00.")
+    assert model.calls[0][0] == "Next up, Tee-esto live at nine o'clock."
+    assert seen == ["Next up, Tiësto live at nine o'clock."]

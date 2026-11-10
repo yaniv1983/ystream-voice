@@ -8,11 +8,14 @@ from .numbers import number_to_words
 from .normalize import normalize_text, detect_language
 from .tags import parse_script, Segment, Script, EVENT_TAGS
 from .longform import split_into_chunks, RadioHost
+from .master import master
+from .verify import make_check, whisper_transcriber, word_error_rate
 from .hebrew import add_niqqud, has_niqqud, HebrewDiacritizerUnavailable
 
 __all__ = [
     "number_to_words", "normalize_text", "detect_language",
     "parse_script", "Segment", "Script", "EVENT_TAGS",
     "split_into_chunks", "RadioHost",
+    "master", "make_check", "whisper_transcriber", "word_error_rate",
     "add_niqqud", "has_niqqud", "HebrewDiacritizerUnavailable",
 ]
