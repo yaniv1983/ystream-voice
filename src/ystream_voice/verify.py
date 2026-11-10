@@ -6,11 +6,14 @@ rejected and `RadioHost` generates another one.
 """
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from typing import Callable
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 _NIQQUD = re.compile(r"[֑-ׇ]")
 _TAGS = re.compile(r"\[[^\[\]]*\]")
@@ -38,18 +41,48 @@ def word_error_rate(reference: str, heard: str) -> float:
     return row[-1] / len(ref)
 
 
-def make_check(transcribe: Callable[[np.ndarray, int, str], str], max_wer: float = 0.25,
-               max_seconds_per_word: float = 1.5):
+def char_error_rate(reference: str, heard: str) -> float:
+    """Edit distance between the letters (spaces removed) divided by the reference length."""
+    ref, hyp = "".join(comparable(reference)), "".join(comparable(heard))
+    if not ref:
+        return 0.0 if not hyp else 1.0
+    row = list(range(len(hyp) + 1))
+    for i, r in enumerate(ref, 1):
+        previous, row[0] = row[0], i
+        for j, h in enumerate(hyp, 1):
+            previous, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, previous + (r != h))
+    return row[-1] / len(ref)
+
+
+def take_error(reference: str, heard: str, lang: str) -> float:
+    """How far a transcript is from the script: 0 is perfect, 1 is unrelated.
+
+    The recogniser writes "7:30" and "99.5" as digits while the script has them
+    spelled out, so the transcript goes through the same normaliser first.
+    Spelling variants (Hebrew full/defective spelling, "okay"/"ok") change whole
+    words but few letters, so the letter-level score is allowed to rescue them.
+    """
+    from .normalize import normalize_text
+    heard = normalize_text(heard, lang)
+    return min(word_error_rate(reference, heard), 2.0 * char_error_rate(reference, heard))
+
+
+def make_check(transcribe: Callable[[np.ndarray, int, str], str], max_seconds_per_word: float = 1.5):
     """Build a `check` function for RadioHost from any transcriber.
 
-    Rejects a take when too many words differ, or when it runs far longer than
-    the script could need (a sign of babbling or a long noisy tail).
+    The function returns an error score (see `take_error`); RadioHost redoes
+    takes above its `max_error` and keeps the best one. A take far longer than
+    the script could need (babbling, a long noisy tail) scores 1.0 unheard.
     """
-    def check(wav: np.ndarray, sr: int, text: str, lang: str) -> bool:
+    def check(wav: np.ndarray, sr: int, text: str, lang: str) -> float:
         words = comparable(text)
         if words and len(wav) / sr > max(3.0, len(words) * max_seconds_per_word):
-            return False
-        return word_error_rate(text, transcribe(wav, sr, lang)) <= max_wer
+            logger.info("Take too long for its text (%.1f s for %d words)", len(wav) / sr, len(words))
+            return 1.0
+        heard = transcribe(wav, sr, lang)
+        error = take_error(text, heard, lang)
+        logger.info("check error=%.2f script=%r heard=%r", error, text, heard.strip())
+        return error
     return check
 
 

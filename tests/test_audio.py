@@ -38,9 +38,18 @@ def test_word_error_rate():
     assert word_error_rate("", "") == 0 and word_error_rate("", "hello") == 1
 
 
-def test_make_check_rejects_wrong_words_and_runaway_length():
-    check = make_check(lambda wav, sr, lang: "stay tuned for more music", max_wer=0.2)
+def test_take_error_forgives_digits_and_spelling():
+    from ystream_voice.verify import take_error
+    script = "It's seven thirty, and you're listening to ninety-nine point five FM."
+    assert take_error(script, "It's 7:30 and you're listening to 99.5 FM", "en") == 0
+    assert take_error("השעה שבע ושלושים", "השעה 7:30", "he") == 0
+    assert take_error("שלום לכולם", "שלום לכלם", "he") < 0.25      # spelling variant
+    assert take_error("Stay tuned for more music.", "Something else entirely here", "en") > 0.6
+
+
+def test_make_check_scores_wrong_words_and_runaway_length():
+    check = make_check(lambda wav, sr, lang: "stay tuned for more music")
     good = np.zeros(24000 * 2, dtype=np.float32)
-    assert check(good, 24000, "Stay tuned for more music.", "en")
-    assert not check(good, 24000, "Something else entirely here.", "en")
-    assert not check(np.zeros(24000 * 30, dtype=np.float32), 24000, "Stay tuned for more music.", "en")
+    assert check(good, 24000, "Stay tuned for more music.", "en") == 0
+    assert check(good, 24000, "Something else entirely here.", "en") > 0.6
+    assert check(np.zeros(24000 * 30, dtype=np.float32), 24000, "Stay tuned for more music.", "en") == 1.0

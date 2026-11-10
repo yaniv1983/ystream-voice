@@ -164,3 +164,23 @@ def test_radio_host_speaks_override_but_checks_written_form():
     host.render("Next up, {{Tiësto|Tee-esto}} live at 9:00.")
     assert model.calls[0][0] == "Next up, Tee-esto live at nine o'clock."
     assert seen == ["Next up, Tiësto live at nine o'clock."]
+
+
+def test_radio_host_keeps_best_take_and_prepares_voice_once():
+    class Model(FakeModel):
+        prepared = 0
+
+        def prepare_conditionals(self, path):
+            self.prepared += 1
+
+        def generate(self, text, language_id=None, **kwargs):
+            super().generate(text, language_id, **kwargs)
+            return np.full((1, 100), float(len(self.calls)), dtype=np.float32)
+
+    model = Model()
+    errors = iter([0.6, 0.3, 0.9])
+    host = RadioHost(model, voice="me.wav", check=lambda *a: next(errors), max_error=0.25)
+    wav, report = host.render("Stay tuned for more music.")
+    assert model.prepared == 1 and "audio_prompt_path" not in model.calls[0][2]
+    assert len(model.calls) == 3 and wav[0] == 2.0          # second take had the lowest error
+    assert report.worst_error == pytest.approx(0.3) and report.failed_checks == 3

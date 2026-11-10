@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -91,6 +92,9 @@ class RenderReport:
     failed_checks: int = 0
     duration: float = 0.0
     fit_ratio: float | None = None
+    generate_seconds: float = 0.0
+    check_seconds: float = 0.0
+    worst_error: float = 0.0   # error score of the worst chunk that was kept
 
 
 class RadioHost:
@@ -101,23 +105,30 @@ class RadioHost:
         wav, report = host.render("[excited] בוקר טוב! השעה 07:30. [pause:0.4s] ...")
 
     `model` only needs `.sr` and `.generate(text, language_id=..., **kwargs)`
-    returning audio of shape (1, n) or (n,). `check(wav, sr, text, lang)` may
-    return False to reject a take (e.g. a Whisper comparison); the chunk is then
-    regenerated up to `max_retries` times and the last take is kept.
+    returning audio of shape (1, n) or (n,). `check(wav, sr, text, lang)` scores
+    a take (e.g. a Whisper comparison): an error from 0 to 1, or True/False.
+    A take above `max_error` is regenerated up to `max_retries` times and the
+    best take is kept.
     """
 
     def __init__(self, model, voice: str | None = None, *, supports_events: bool = False,
                  max_chars: int = 220, max_retries: int = 2,
-                 check: Callable[[np.ndarray, int, str, str], bool] | None = None,
-                 sentence_gap: float = 0.12):
+                 check: Callable[[np.ndarray, int, str, str], bool | float] | None = None,
+                 max_error: float = 0.25, sentence_gap: float = 0.12):
         self.model = model
         self.voice = voice
         self.supports_events = supports_events
         self.max_chars = max_chars
         self.max_retries = max_retries
         self.check = check
+        self.max_error = max_error
         self.sentence_gap = sentence_gap
         self.sr = int(model.sr)
+        # Analyse the reference voice once, not again for every chunk.
+        self._voice_prepared = False
+        if voice and hasattr(model, "prepare_conditionals"):
+            model.prepare_conditionals(voice)
+            self._voice_prepared = True
 
     # -- text ---------------------------------------------------------------
     def prepare_text(self, segment: Segment, lang: str) -> str:
@@ -139,24 +150,37 @@ class RadioHost:
 
     def _generate(self, text: str, lang: str, style: Style, report: RenderReport, **overrides) -> np.ndarray:
         kwargs = {**style_to_generate_kwargs(style), **overrides}
-        if self.voice:
+        if self.voice and not self._voice_prepared:
             kwargs["audio_prompt_path"] = self.voice
-        wav = None
         spoken = self.spoken_text(text, lang)
         # Takes are checked against the plain spelling: a recogniser writes Hebrew
         # without niqqud, and with the usual spelling of an overridden name.
         text = written_form(text)
+        best, best_error = None, float("inf")
         for attempt in range(self.max_retries + 1):
+            started = time.perf_counter()
             out = self.model.generate(spoken, language_id=lang, **kwargs)
             out = out.detach().cpu().numpy() if hasattr(out, "detach") else np.asarray(out)
             wav = out.reshape(-1).astype(np.float32)
-            if self.check is None or self.check(wav, self.sr, text, lang):
+            report.generate_seconds += time.perf_counter() - started
+            if self.check is None:
                 return wav
+            started = time.perf_counter()
+            result = self.check(wav, self.sr, text, lang)
+            report.check_seconds += time.perf_counter() - started
+            error = (0.0 if result else 1.0) if isinstance(result, bool) else float(result)
+            if error < best_error:
+                best, best_error = wav, error
+            if error <= self.max_error:
+                break
             report.failed_checks += 1
             if attempt < self.max_retries:
                 report.retries += 1
-        logger.warning("Chunk failed its check %d times, keeping last take: %r", self.max_retries + 1, text[:60])
-        return wav
+        else:
+            logger.warning("No take passed the check after %d tries, keeping the best (error %.2f): %r",
+                           self.max_retries + 1, best_error, text)
+        report.worst_error = max(report.worst_error, best_error)
+        return best
 
     def render(self, script: str | Script, language: str | None = None, **generate_overrides):
         """Return (mono float32 audio at `self.sr`, RenderReport)."""
