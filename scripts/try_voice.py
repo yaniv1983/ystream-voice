@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--lang", choices=["he", "en"], help="Force a language instead of detecting it")
     parser.add_argument("--out", default="output.wav")
     parser.add_argument("--model", default="v3", help="Multilingual T3 weights: v2 or v3")
+    parser.add_argument("--adapter", help="Trained voice add-on (path without extension) from train_voice.py")
     parser.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
     parser.add_argument("--verbose", action="store_true", help="Print what the checker heard for each take")
     parser.add_argument("--check", action="store_true",
@@ -45,6 +46,9 @@ def main():
 
     started = time.time()
     model = ChatterboxMultilingualTTS.from_pretrained(device, t3_model=args.model)
+    if args.adapter:
+        from ystream_voice.training import load_adapter
+        load_adapter(model.t3, args.adapter)
     check = make_check(whisper_transcriber(device="cpu", compute_type="int8")) if args.check else None
     host = RadioHost(model, voice=args.voice, check=check)
     load_seconds = time.time() - started
