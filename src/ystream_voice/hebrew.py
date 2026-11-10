@@ -29,6 +29,13 @@ _NIQQUD = re.compile(r"[ְ-ׇּׁׂ]")
 _OVERRIDE = re.compile(r"\{\{([^|{}]*)\|([^|{}]*)\}\}")
 
 _dicta = None
+_enabled = True
+
+
+def set_niqqud(enabled: bool) -> None:
+    """Turn automatic niqqud on or off for the whole process (for A/B experiments)."""
+    global _enabled
+    _enabled = bool(enabled)
 
 
 def written_form(text: str) -> str:
@@ -105,6 +112,8 @@ def add_niqqud(text: str, diacritize=None) -> str:
     - If the diacritizer is missing this raises, unless YSTREAM_ALLOW_BARE_HEBREW=1.
     `diacritize` can be injected for tests.
     """
+    if not _enabled and diacritize is None:
+        return spoken_form(text)
     diacritize = diacritize or _diacritize
     try:
         out, pos = [], 0

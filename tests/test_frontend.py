@@ -184,3 +184,12 @@ def test_radio_host_keeps_best_take_and_prepares_voice_once():
     assert model.prepared == 1 and "audio_prompt_path" not in model.calls[0][2]
     assert len(model.calls) == 3 and wav[0] == 2.0          # second take had the lowest error
     assert report.worst_error == pytest.approx(0.3) and report.failed_checks == 3
+
+
+def test_niqqud_can_be_switched_off():
+    from ystream_voice import hebrew
+    hebrew.set_niqqud(False)
+    try:
+        assert add_niqqud("שלום {{Tiesto|טִיֶסְטוֹ}}") == "שלום טִיֶסְטוֹ"
+    finally:
+        hebrew.set_niqqud(True)
