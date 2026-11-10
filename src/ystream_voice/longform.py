@@ -115,7 +115,8 @@ class RadioHost:
                  max_chars: int = 220, max_retries: int = 2,
                  check: Callable[[np.ndarray, int, str, str], bool | float] | None = None,
                  max_error: float = 0.25, sentence_gap: float = 0.12,
-                 lead_in: float = 0.0, fade_in: float = 0.008):
+                 lead_in: float = 0.0, fade_in: float = 0.008,
+                 options: dict | None = None):
         self.model = model
         self.voice = voice
         self.supports_events = supports_events
@@ -126,6 +127,7 @@ class RadioHost:
         self.sentence_gap = sentence_gap
         self.lead_in = lead_in      # silence before the first sound of the file
         self.fade_in = fade_in      # ramp at the start of every generated chunk
+        self.options = dict(options or {})   # extra generate() settings, e.g. {"temperature": 0.6}
         self.sr = int(model.sr)
         # Analyse the reference voice once, not again for every chunk.
         self._voice_prepared = False
@@ -160,7 +162,7 @@ class RadioHost:
         return wav
 
     def _generate(self, text: str, lang: str, style: Style, report: RenderReport, **overrides) -> np.ndarray:
-        kwargs = {**style_to_generate_kwargs(style), **overrides}
+        kwargs = {**style_to_generate_kwargs(style), **self.options, **overrides}
         if self.voice and not self._voice_prepared:
             kwargs["audio_prompt_path"] = self.voice
         spoken = self.spoken_text(text, lang)

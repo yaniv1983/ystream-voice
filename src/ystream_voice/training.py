@@ -26,6 +26,8 @@ from torch import nn
 from chatterbox.models.t3.modules.cond_enc import T3Cond
 
 DEFAULT_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj")
+# Attention plus the feed-forward layers: more room to learn a language, more memory.
+ALL_TARGETS = DEFAULT_TARGETS + ("gate_proj", "up_proj", "down_proj")
 
 
 # ------------------------------------------------------------------ LoRA

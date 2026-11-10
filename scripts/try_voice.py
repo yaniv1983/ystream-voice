@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="Print what the checker heard for each take")
     parser.add_argument("--check", action="store_true",
                         help="Listen to each take with Whisper (on the CPU) and redo bad ones; needs faster-whisper")
+    parser.add_argument("--temperature", type=float, help="Lower (0.6) = steadier reading, higher = livelier")
     parser.add_argument("--raw", action="store_true", help="Skip loudness mastering (-16 LUFS, -1 dBTP)")
     args = parser.parse_args()
 
@@ -50,7 +51,8 @@ def main():
         from ystream_voice.training import load_adapter
         load_adapter(model.t3, args.adapter)
     check = make_check(whisper_transcriber(device="cpu", compute_type="int8")) if args.check else None
-    host = RadioHost(model, voice=args.voice, check=check, lead_in=0.15)
+    options = {"temperature": args.temperature} if args.temperature else {}
+    host = RadioHost(model, voice=args.voice, check=check, lead_in=0.15, options=options)
     load_seconds = time.time() - started
     started = time.time()
     wav, report = host.render(script, language=args.lang)

@@ -47,6 +47,7 @@ def main():
     parser.add_argument("--settings", nargs="*", default=list(SETTINGS), choices=list(SETTINGS))
     parser.add_argument("--adapter", action="append", default=[], metavar="NAME=PATH",
                         help="Also test a trained add-on, e.g. yaniv=adapters/yaniv (v3 weights, default options)")
+    parser.add_argument("--adapter-temperature", type=float, help="Temperature for the --adapter entries")
     parser.add_argument("--lang", default="he", choices=["he", "en"])
     args = parser.parse_args()
 
@@ -60,7 +61,8 @@ def main():
     settings = {name: SETTINGS[name] + (None,) for name in args.settings}
     for spec in args.adapter:
         name, _, path = spec.partition("=")
-        settings[name] = ("v3", True, {}, path)
+        options = {"temperature": args.adapter_temperature} if args.adapter_temperature else {}
+        settings[name] = ("v3", True, options, path)
     names = list(settings)
 
     for name in names:

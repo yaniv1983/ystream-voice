@@ -158,3 +158,17 @@ def test_training_reports_loss_per_dataset(t3, tmp_path):
     summary = tr.train(t3, examples, [examples[0], examples[5]], config, tmp_path / "a", log=logs.append, use_amp=False)
     assert set(summary["baseline_by_dataset"]) == {"yaniv", "fleurs", "mean"}
     assert "yaniv" in logs[0] and "fleurs" in logs[0]
+
+
+def test_wide_adapter_covers_feed_forward_layers_and_reloads(t3, tmp_path):
+    from ystream_voice.training import ALL_TARGETS, LoRAConfig, LoRALinear, add_lora, load_adapter, save_adapter
+
+    config = LoRAConfig(rank=2, alpha=4.0, targets=ALL_TARGETS)
+    params = add_lora(t3, config)
+    wrapped = [m for m in t3.tfmr.modules() if isinstance(m, LoRALinear)]
+    assert len(wrapped) == 2 * 7 and len(params) == 2 * len(wrapped)
+    save_adapter(t3, tmp_path / "wide", config)
+    from ystream_voice.training import merge_lora
+    merge_lora(t3)
+    meta = load_adapter(t3, tmp_path / "wide")
+    assert set(meta["lora"]["targets"]) == set(ALL_TARGETS)

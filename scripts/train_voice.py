@@ -16,7 +16,7 @@ from pathlib import Path
 import torch
 
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-from ystream_voice.training import (LoRAConfig, ReferencePool, TrainConfig, assign_speakers, is_validation,
+from ystream_voice.training import (ALL_TARGETS, DEFAULT_TARGETS, LoRAConfig, ReferencePool, TrainConfig, assign_speakers, is_validation,
                                     load_adapter, load_examples, make_example, save_examples, train)
 
 
@@ -41,6 +41,8 @@ def main():
     parser.add_argument("--steps", type=int, default=1500)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--rank", type=int, default=16)
+    parser.add_argument("--targets", default="attention", choices=["attention", "all"],
+                        help="Which layers get an add-on: attention only, or attention + feed-forward")
     parser.add_argument("--batch-tokens", type=int, default=1400, help="Lower this if the GPU runs out of memory")
     parser.add_argument("--eval-every", type=int, default=100)
     parser.add_argument("--val-percent", type=int, default=8, help="Share of each dataset held out (stable split)")
@@ -109,8 +111,9 @@ def main():
         torch.cuda.empty_cache()
 
     config = TrainConfig(steps=args.steps, lr=args.lr, batch_tokens=args.batch_tokens,
-                         eval_every=args.eval_every, seed=args.seed, lora=LoRAConfig(rank=args.rank,
-                                                                                    alpha=2.0 * args.rank))
+                         eval_every=args.eval_every, seed=args.seed, lora=LoRAConfig(
+                             rank=args.rank, alpha=2.0 * args.rank,
+                             targets=ALL_TARGETS if args.targets == "all" else DEFAULT_TARGETS))
     started = time.time()
     summary = train(model.t3, train_set, val_set, config, args.out, log=lambda m: print(m, flush=True))
     minutes = (time.time() - started) / 60
