@@ -35,6 +35,11 @@ def main():
     rows = prepare_dataset(files, Path(args.out), args.lang, transcribe)
     seconds = sum(float(r["end"]) - float(r["start"]) for r in rows)
     print(f"{len(files)} recordings -> {len(rows)} clips, {seconds / 60:.1f} minutes ({args.lang})")
+    flagged = [r for r in rows if r["flag"]]
+    usable = sum(float(r["end"]) - float(r["start"]) for r in rows if not r["flag"])
+    print(f"Flagged to skip: {len(flagged)} clips; usable: {usable / 60:.1f} minutes")
+    for r in flagged:
+        print(f"  {r['clip']}  [{r['flag']}]  {r['text'][:70]}")
     print(f"Transcripts: {Path(args.out) / 'metadata.csv'}")
 
 

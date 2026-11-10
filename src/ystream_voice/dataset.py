@@ -53,17 +53,16 @@ def find_pauses(wav: np.ndarray, sr: int, min_pause: float = 0.25, drop_db: floa
     return pauses
 
 
-def cut_at_pauses(wav: np.ndarray, sr: int, min_len: float = 3.0, max_len: float = 15.0,
-                  padding: float = 0.1, **pause_options) -> list[Clip]:
-    """Split a recording into clips of `min_len`..`max_len` seconds, cutting only in pauses.
+# Tried in order: a stretch with no clear pause is re-examined with shorter,
+# shallower pauses (breaths between phrases; compressed audio with little dynamic range).
+_PAUSE_LEVELS = [(0.25, 35.0), (0.15, 28.0), (0.10, 22.0), (0.07, 16.0)]
 
-    Each clip keeps `padding` seconds of the surrounding silence. Stretches with
-    no pause for longer than `max_len` are dropped rather than cut mid-word, and
-    so are leftovers shorter than `min_len`.
-    """
+
+def _cut(wav: np.ndarray, sr: int, offset: float, min_len: float, max_len: float,
+         padding: float, level: int) -> list[Clip]:
     total = len(wav) / sr
-    pauses = find_pauses(wav, sr, **pause_options)
-    # Speech runs between pauses.
+    min_pause, drop_db = _PAUSE_LEVELS[level]
+    pauses = find_pauses(wav, sr, min_pause=min_pause, drop_db=drop_db)
     edges = [0.0] + [t for p in pauses for t in p] + [total]
     runs = [(edges[i], edges[i + 1]) for i in range(0, len(edges), 2) if edges[i + 1] - edges[i] > 0.05]
 
@@ -71,12 +70,18 @@ def cut_at_pauses(wav: np.ndarray, sr: int, min_len: float = 3.0, max_len: float
     current: list[tuple[float, float]] = []
 
     def close():
-        if current:
-            start = max(0.0, current[0][0] - padding)
-            end = min(total, current[-1][1] + padding)
-            if min_len <= end - start <= max_len:
-                clips.append(Clip(start, end))
-            current.clear()
+        if not current:
+            return
+        start = max(0.0, current[0][0] - padding)
+        end = min(total, current[-1][1] + padding)
+        current.clear()
+        if end - start > max_len:
+            # One unbroken stretch that is too long: look for subtler pauses inside it.
+            if level + 1 < len(_PAUSE_LEVELS):
+                inner = wav[int(start * sr): int(end * sr)]
+                clips.extend(_cut(inner, sr, offset + start, min_len, max_len, padding, level + 1))
+        elif end - start >= min_len:
+            clips.append(Clip(offset + start, offset + end))
 
     for run in runs:
         if current and run[1] - current[0][0] + 2 * padding > max_len:
@@ -91,13 +96,65 @@ def cut_at_pauses(wav: np.ndarray, sr: int, min_len: float = 3.0, max_len: float
     return clips
 
 
+def cut_at_pauses(wav: np.ndarray, sr: int, min_len: float = 3.0, max_len: float = 15.0,
+                  padding: float = 0.1) -> list[Clip]:
+    """Split a recording into clips of `min_len`..`max_len` seconds, cutting only in pauses.
+
+    Each clip keeps up to `padding` seconds of the surrounding silence. A stretch
+    with no clear pause for longer than `max_len` is searched again for shorter
+    and shallower pauses; only if none exist is it dropped rather than cut
+    mid-word. Leftovers shorter than `min_len` are dropped.
+    """
+    return _cut(wav, sr, 0.0, min_len, max_len, padding, 0)
+
+
+def _plain(text: str) -> str:
+    from .verify import comparable
+    return " ".join(comparable(text))
+
+
+def flag_rows(rows: list[dict]) -> None:
+    """Fill each row's `flag` with reasons to leave it out of training (empty = use it).
+
+    - short:    fewer than 3 words (mic checks, "thank you", fillers)
+    - stutter:  the same word or phrase repeated back to back inside the clip
+    - retake:   a later clip from the same recording says nearly the same thing,
+                so this one is an earlier attempt; the last take is kept
+    - cut-off:  the transcript ends with "..." (stopped mid-sentence)
+    """
+    from difflib import SequenceMatcher
+
+    texts = [_plain(r["text"]) for r in rows]
+    for i, row in enumerate(rows):
+        words = texts[i].split()
+        flags = []
+        if len(words) < 3:
+            flags.append("short")
+        if any(words[j:j + n] == words[j + n:j + 2 * n]
+               for n in (1, 2, 3) for j in range(len(words) - 2 * n + 1)
+               if n > 1 or len(words[j]) > 2):
+            flags.append("stutter")
+        if row["text"].rstrip().endswith(("...", "…")):
+            flags.append("cut-off")
+        head = " ".join(words[:8])
+        for j in range(i + 1, len(rows)):
+            if rows[j]["source"] != row["source"] or len(words) < 3:
+                continue
+            other = " ".join(texts[j].split()[:8])
+            if SequenceMatcher(None, head, other).ratio() > 0.8:
+                flags.append("retake")
+                break
+        row["flag"] = " ".join(flags)
+
+
 def prepare_dataset(files: list[Path], out_dir: Path, language: str,
                     transcribe: Callable[[np.ndarray, int, str], str] | None = None,
                     min_len: float = 3.0, max_len: float = 15.0) -> list[dict]:
     """Cut `files` into clips under `out_dir/clips` and write `out_dir/metadata.csv`.
 
     Clips keep the source sample rate (mono, 24-bit). Returns the metadata rows.
-    Existing rows for other languages in metadata.csv are preserved.
+    Existing rows for other languages in metadata.csv are preserved. Rows with a
+    non-empty `flag` (see `flag_rows`) are meant to be skipped by training.
     """
     import soundfile
 
@@ -116,7 +173,10 @@ def prepare_dataset(files: list[Path], out_dir: Path, language: str,
                 "clip": f"clips/{name}", "language": language, "source": path.name,
                 "start": f"{clip.start:.2f}", "end": f"{clip.end:.2f}", "sample_rate": sr,
                 "text": transcribe(audio, sr, language).strip() if transcribe else "",
+                "flag": "",
             })
+    if transcribe:
+        flag_rows(rows)
 
     meta = out_dir / "metadata.csv"
     kept: list[dict] = []
@@ -124,7 +184,8 @@ def prepare_dataset(files: list[Path], out_dir: Path, language: str,
         with meta.open(encoding="utf-8-sig", newline="") as f:
             kept = [r for r in csv.DictReader(f) if r.get("language") != language]
     with meta.open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["clip", "language", "source", "start", "end", "sample_rate", "text"])
+        writer = csv.DictWriter(f, fieldnames=["clip", "language", "source", "start", "end", "sample_rate", "text", "flag"],
+                                restval="")
         writer.writeheader()
         writer.writerows(kept + rows)
     return rows
