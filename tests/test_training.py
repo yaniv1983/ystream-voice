@@ -113,3 +113,48 @@ def test_training_reduces_loss_and_saves_best_adapter(t3, tmp_path):
     assert summary["best"]["val"] < summary["baseline_val"] - 0.05
     assert (tmp_path / "a.safetensors").exists() and (tmp_path / "a.json").exists()
     assert (tmp_path / "a.history.json").exists() and len(logs) == 4
+
+
+def test_assign_speakers_groups_similar_voices(t3):
+    g = torch.Generator().manual_seed(0)
+    voice_a, voice_b = torch.randn(256, generator=g), torch.randn(256, generator=g)
+    examples = []
+    for i in range(7):
+        e = example(t3.hp, 5, 20, i)
+        e.speaker_emb = (voice_a if i % 2 == 0 else voice_b) + 0.1 * torch.randn(256, generator=g)
+        examples.append(e)
+    lone = example(t3.hp, 5, 20, 99)
+    examples.append(lone)
+    assert tr.assign_speakers(examples, "v") == 3
+    assert len({e.speaker for e in examples[0:7:2]}) == 1 and len({e.speaker for e in examples[1:7:2]}) == 1
+    assert examples[0].speaker != examples[1].speaker
+    pool = tr.ReferencePool(examples)
+    assert not pool.has_partner(lone) and pool.has_partner(examples[0])
+    ref = pool.pick(examples[0], random.Random(0))
+    assert ref is not examples[0] and ref.speaker == examples[0].speaker
+
+
+def test_references_stay_inside_dataset_and_split_is_stable(t3):
+    a = [example(t3.hp, 5, 20, i) for i in range(4)]
+    b = [example(t3.hp, 5, 20, 10 + i) for i in range(4)]
+    for e in a:
+        e.dataset, e.speaker = "yaniv", "he"
+    for e in b:
+        e.dataset, e.speaker = "fleurs", "he"
+    pool = tr.ReferencePool(a + b)
+    rng = random.Random(0)
+    assert all(pool.pick(e, rng).dataset == "yaniv" for e in a for _ in range(5))
+    many = [example(t3.hp, 5, 20, i) for i in range(300)]
+    held = [tr.is_validation(e) for e in many]
+    assert held == [tr.is_validation(e) for e in many] and 8 <= sum(held) <= 45
+
+
+def test_training_reports_loss_per_dataset(t3, tmp_path):
+    examples = [example(t3.hp, 6, 30, i) for i in range(8)]
+    for i, e in enumerate(examples):
+        e.dataset, e.speaker = ("yaniv" if i < 4 else "fleurs"), "he"
+    config = tr.TrainConfig(steps=4, batch_tokens=200, eval_every=2, lora=tr.LoRAConfig(rank=2, alpha=4, dropout=0.0))
+    logs = []
+    summary = tr.train(t3, examples, [examples[0], examples[5]], config, tmp_path / "a", log=logs.append, use_amp=False)
+    assert set(summary["baseline_by_dataset"]) == {"yaniv", "fleurs", "mean"}
+    assert "yaniv" in logs[0] and "fleurs" in logs[0]

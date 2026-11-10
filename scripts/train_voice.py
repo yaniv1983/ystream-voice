@@ -16,8 +16,8 @@ from pathlib import Path
 import torch
 
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-from ystream_voice.training import (LoRAConfig, TrainConfig, load_examples, make_example,
-                                    save_examples, train)
+from ystream_voice.training import (LoRAConfig, ReferencePool, TrainConfig, assign_speakers, is_validation,
+                                    load_adapter, load_examples, make_example, save_examples, train)
 
 
 def build_features(model, data: Path, languages) -> list:
@@ -43,8 +43,13 @@ def main():
     parser.add_argument("--rank", type=int, default=16)
     parser.add_argument("--batch-tokens", type=int, default=1400, help="Lower this if the GPU runs out of memory")
     parser.add_argument("--eval-every", type=int, default=100)
-    parser.add_argument("--val-fraction", type=float, default=0.08)
-    parser.add_argument("--max-clips", type=int, default=0, help="Use only this many clips (0 = all)")
+    parser.add_argument("--val-percent", type=int, default=8, help="Share of each dataset held out (stable split)")
+    parser.add_argument("--max-clips", type=int, default=0, help="Use at most this many clips per dataset (0 = all)")
+    parser.add_argument("--repeat", action="append", default=[], metavar="FOLDER=N",
+                        help="Show one dataset's clips N times per pass, e.g. yaniv=5 (matches the folder name)")
+    parser.add_argument("--multi-speaker", action="append", default=[], metavar="FOLDER",
+                        help="This dataset has many voices: group its clips by voice automatically")
+    parser.add_argument("--start-from", help="Adapter to merge into the model before training a new one on top")
     parser.add_argument("--rebuild-features", action="store_true")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
     parser.add_argument("--seed", type=int, default=0)
@@ -55,29 +60,48 @@ def main():
         device = "cuda" if torch.cuda.is_available() and torch.cuda.device_count() > 0 else "cpu"
     model = ChatterboxMultilingualTTS.from_pretrained(device, t3_model=args.model)
 
-    examples = []
+    repeats = dict(spec.split("=") for spec in args.repeat)
+    rng = random.Random(args.seed)
+    train_set, val_set = [], []
     for folder in map(Path, args.data):
         cache = folder / f"features_{args.model}.pt"
         if cache.exists() and not args.rebuild_features:
-            loaded = [e for e in load_examples(cache) if e.language in args.languages]
+            loaded = load_examples(cache)
             print(f"{folder}: {len(loaded)} cached clips")
         else:
             print(f"{folder}: converting clips to model inputs (one time)")
-            loaded = build_features(model, folder, args.languages)
+            loaded = build_features(model, folder, ["he", "en"])
             save_examples(loaded, cache)
-        examples += loaded
-    # Clips beyond the model's limits cannot be trained on.
-    hp = model.t3.hp
-    examples = [e for e in examples if 20 <= e.speech_tokens.numel() <= 1000 and e.text_tokens.numel() <= 600]
-    rng = random.Random(args.seed)
-    rng.shuffle(examples)
-    if args.max_clips:
-        examples = examples[: args.max_clips]
-    n_val = max(2, int(len(examples) * args.val_fraction)) if len(examples) >= 20 else 0
-    val_set, train_set = examples[:n_val], examples[n_val:]
-    seconds = sum(e.speech_tokens.numel() - 2 for e in train_set) / 25
-    print(f"training on {len(train_set)} clips ({seconds / 60:.1f} min), validating on {len(val_set)}; "
-          f"device {device}")
+        # Clips beyond the model's limits cannot be trained on.
+        loaded = [e for e in loaded if e.language in args.languages
+                  and 20 <= e.speech_tokens.numel() <= 1000 and e.text_tokens.numel() <= 600]
+        for e in loaded:
+            e.dataset = folder.name
+        if folder.name in args.multi_speaker:
+            voices = assign_speakers(loaded, prefix="v")
+            pool = ReferencePool(loaded)
+            alone = sum(not pool.has_partner(e) for e in loaded)
+            loaded = [e for e in loaded if pool.has_partner(e)]
+            print(f"{folder}: {voices} voices found; dropped {alone} clips whose voice appears only once")
+        else:
+            for e in loaded:
+                e.speaker = e.language   # one person; keep references within the same language
+        rng.shuffle(loaded)
+        if args.max_clips:
+            loaded = loaded[: args.max_clips]
+        held = [e for e in loaded if is_validation(e, args.val_percent)] if len(loaded) >= 20 else []
+        held_ids = {id(e) for e in held[:60]}
+        kept = [e for e in loaded if id(e) not in held_ids]
+        held = held[:60]
+        times = int(repeats.get(folder.name, 1))
+        seconds = sum(e.speech_tokens.numel() - 2 for e in kept) / 25
+        print(f"{folder}: training on {len(kept)} clips ({seconds / 60:.1f} min) x{times}, holding out {len(held)}")
+        train_set += kept * times
+        val_set += held
+    print(f"total: {len(train_set)} training clips per pass, {len(val_set)} held out; device {device}")
+    if args.start_from:
+        meta = load_adapter(model.t3, args.start_from)
+        print(f"started from {args.start_from} (merged; best val {meta['info'].get('best', {}).get('val')})")
 
     # Free what training does not need.
     del model.s3gen, model.ve
@@ -94,6 +118,13 @@ def main():
           f"{summary['best']['val']:.4f} best (step {summary['best']['step']})")
     if device == "cuda":
         print(f"Peak GPU memory: {torch.cuda.max_memory_allocated() / 2**30:.1f} GB")
+    if args.start_from:
+        # Remember the adapter this one was trained on top of; load_adapter applies it first.
+        import json
+        meta_path = Path(args.out).with_suffix(".json")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["info"]["start_from"] = str(args.start_from)
+        meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Adapter: {Path(args.out).with_suffix('.safetensors')}")
 
 

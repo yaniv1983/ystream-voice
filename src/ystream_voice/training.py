@@ -109,6 +109,9 @@ def load_adapter(t3, path, merge: bool = True) -> dict:
     from safetensors.torch import load_file
     path = Path(path)
     meta = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    if meta.get("info", {}).get("start_from"):
+        # Trained on top of another adapter: that one has to be merged in first.
+        load_adapter(t3, meta["info"]["start_from"], merge=True)
     lora = meta["lora"]
     add_lora(t3, LoRAConfig(lora["rank"], lora["alpha"], 0.0, tuple(lora["targets"])))
     state = load_file(str(path.with_suffix(".safetensors")))
@@ -130,6 +133,8 @@ class Example:
     prompt_tokens: torch.Tensor    # (P,) long, speech tokens of the clip's opening, no specials
     language: str = ""
     name: str = ""
+    speaker: str = ""              # clips with the same label can serve as each other's reference
+    dataset: str = ""              # which prepared folder the clip came from
 
 
 def frame_text_and_speech(hp, text_ids: torch.Tensor, speech_ids: torch.Tensor):
@@ -243,10 +248,60 @@ class TrainConfig:
     lora: LoRAConfig = field(default_factory=LoRAConfig)
 
 
-def pick_reference(example: Example, pool: list[Example], rng: random.Random) -> Example:
-    """Another clip in the same language when there is one, so the model cannot copy its prompt."""
-    same = [e for e in pool if e is not example and e.language == example.language]
-    return rng.choice(same) if same else example
+def assign_speakers(examples: list[Example], prefix: str, threshold: float = 0.75) -> int:
+    """Label clips by voice when a dataset has no speaker names. Returns the number of voices found.
+
+    Greedy clustering on the voice-encoder embedding: a clip joins the first
+    cluster whose running mean it resembles (cosine above `threshold`), else
+    starts a new one. Good enough to find "another clip by the same person".
+    """
+    centres: list[torch.Tensor] = []
+    counts: list[int] = []
+    for e in examples:
+        emb = F.normalize(e.speaker_emb.float(), dim=0)
+        best, best_sim = -1, threshold
+        for i, centre in enumerate(centres):
+            sim = float(torch.dot(emb, F.normalize(centre, dim=0)))
+            if sim > best_sim:
+                best, best_sim = i, sim
+        if best < 0:
+            centres.append(emb.clone())
+            counts.append(1)
+            best = len(centres) - 1
+        else:
+            centres[best] = (centres[best] * counts[best] + emb) / (counts[best] + 1)
+            counts[best] += 1
+        e.speaker = f"{prefix}{best:04d}"
+    return len(centres)
+
+
+def is_validation(example: Example, percent: int = 8) -> bool:
+    """Stable split by clip name, so the same clips are held out in every run."""
+    import zlib
+    return zlib.crc32(f"{example.dataset}/{example.name}".encode("utf-8")) % 100 < percent
+
+
+class ReferencePool:
+    """Finds, for a clip, another clip by the same speaker to act as the voice reference."""
+
+    def __init__(self, examples: list[Example]):
+        self.by_speaker: dict[tuple, list[Example]] = {}
+        for e in examples:
+            self.by_speaker.setdefault((e.dataset, e.speaker), []).append(e)
+
+    def has_partner(self, example: Example) -> bool:
+        return len(self.by_speaker.get((example.dataset, example.speaker), ())) > 1
+
+    def pick(self, example: Example, rng: random.Random) -> Example:
+        """Another clip by the same speaker, so the model cannot copy its own prompt."""
+        group = self.by_speaker.get((example.dataset, example.speaker), ())
+        others = [e for e in group if e is not example]
+        return rng.choice(others) if others else example
+
+
+def pick_reference(example: Example, pool, rng: random.Random) -> Example:
+    pool = pool if isinstance(pool, ReferencePool) else ReferencePool(pool)
+    return pool.pick(example, rng)
 
 
 def make_batches(examples: list[Example], batch_tokens: int, rng: random.Random) -> list[list[Example]]:
@@ -267,21 +322,32 @@ def make_batches(examples: list[Example], batch_tokens: int, rng: random.Random)
 
 
 @torch.no_grad()
-def evaluate(t3, examples: list[Example], pool: list[Example], batch_tokens: int) -> float:
+def evaluate(t3, examples: list[Example], pool, batch_tokens: int) -> float:
     """Mean speech loss over held-out clips, with fixed references and no text dropout."""
     if not examples:
         return float("nan")
+    pool = pool if isinstance(pool, ReferencePool) else ReferencePool(pool)
     rng = random.Random(1234)
     was_training = t3.training
     t3.eval()
     total, count = 0.0, 0
+    amp = t3.device.type == "cuda"
     for batch in make_batches(examples, batch_tokens, random.Random(0)):
-        pairs = [(e, pick_reference(e, pool, rng)) for e in batch]
-        _, speech_loss, _ = batch_loss(t3, pairs, cfg_dropout=0.0, text_weight=0.0)
+        pairs = [(e, pool.pick(e, rng)) for e in batch]
+        with torch.autocast(device_type=t3.device.type, dtype=torch.bfloat16, enabled=amp):
+            _, speech_loss, _ = batch_loss(t3, pairs, cfg_dropout=0.0, text_weight=0.0)
         total += float(speech_loss) * len(batch)
         count += len(batch)
     t3.train(was_training)
     return total / count
+
+
+def evaluate_by_dataset(t3, examples: list[Example], pool, batch_tokens: int) -> dict[str, float]:
+    """Held-out loss per dataset, plus "mean": the average of the per-dataset values."""
+    names = sorted({e.dataset for e in examples})
+    result = {n: evaluate(t3, [e for e in examples if e.dataset == n], pool, batch_tokens) for n in names}
+    result["mean"] = sum(result.values()) / len(result) if result else float("nan")
+    return result
 
 
 def train(t3, train_set: list[Example], val_set: list[Example], config: TrainConfig, out_path,
@@ -305,11 +371,20 @@ def train(t3, train_set: list[Example], val_set: list[Example], config: TrainCon
 
     device = t3.device
     amp = (device.type == "cuda") if use_amp is None else use_amp
-    pool = train_set
-    base_val = evaluate(t3, val_set, pool, config.batch_tokens)
-    log(f"step 0: val speech loss {base_val:.4f} (pretrained model, before training)")
-    history = [{"step": 0, "val": base_val}]
-    best = {"step": 0, "val": base_val}
+    # Held-out clips may still lend their voice as a reference; they are never trained on.
+    pool = ReferencePool(train_set + val_set)
+
+    def run_eval():
+        detail = evaluate_by_dataset(t3, val_set, pool, config.batch_tokens)
+        return detail["mean"], detail
+
+    def describe(detail):
+        return ", ".join(f"{k or 'data'} {v:.4f}" for k, v in detail.items() if k != "mean")
+
+    base_val, base_detail = run_eval()
+    log(f"step 0: val speech loss {base_val:.4f} [{describe(base_detail)}] (before training)")
+    history = [{"step": 0, "val": base_val, "val_by_dataset": base_detail}]
+    best = {"step": 0, "val": base_val, "val_by_dataset": base_detail}
     info = {"clips": len(train_set), "val_clips": len(val_set), "config": asdict(config)}
 
     t3.train()
@@ -318,7 +393,7 @@ def train(t3, train_set: list[Example], val_set: list[Example], config: TrainCon
         for batch in make_batches(train_set, config.batch_tokens, rng):
             if step >= config.steps:
                 break
-            pairs = [(e, pick_reference(e, pool, rng)) for e in batch]
+            pairs = [(e, pool.pick(e, rng)) for e in batch]
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp):
                 loss, speech_loss, _ = batch_loss(t3, pairs, cfg_dropout=config.cfg_dropout,
                                                   text_weight=config.text_weight)
@@ -330,15 +405,16 @@ def train(t3, train_set: list[Example], val_set: list[Example], config: TrainCon
             step += 1
             running.append(float(speech_loss.detach()))
             if step % config.eval_every == 0 or step == config.steps:
-                val = evaluate(t3, val_set, pool, config.batch_tokens)
+                val, detail = run_eval()
                 train_loss = sum(running) / len(running)
                 running = []
-                history.append({"step": step, "train": train_loss, "val": val})
-                log(f"step {step}: train speech loss {train_loss:.4f}, val {val:.4f}")
+                history.append({"step": step, "train": train_loss, "val": val, "val_by_dataset": detail})
+                log(f"step {step}: train speech loss {train_loss:.4f}, val {val:.4f} [{describe(detail)}]")
                 # Without held-out clips there is nothing to select on: keep the latest.
                 if math.isnan(val) or val < best["val"] or math.isnan(best["val"]):
-                    best = {"step": step, "val": val}
+                    best = {"step": step, "val": val, "val_by_dataset": detail}
                     save_adapter(t3, out_path, config.lora, {**info, "best": best, "history": history})
-    summary = {**info, "best": best, "baseline_val": base_val, "history": history}
+    summary = {**info, "best": best, "baseline_val": base_val, "baseline_by_dataset": base_detail,
+               "history": history}
     Path(out_path).with_suffix(".history.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
