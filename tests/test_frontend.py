@@ -182,7 +182,7 @@ def test_radio_host_keeps_best_take_and_prepares_voice_once():
     host = RadioHost(model, voice="me.wav", check=lambda *a: next(errors), max_error=0.25)
     wav, report = host.render("Stay tuned for more music.")
     assert model.prepared == 1 and "audio_prompt_path" not in model.calls[0][2]
-    assert len(model.calls) == 3 and wav[0] == 2.0          # second take had the lowest error
+    assert len(model.calls) == 3 and wav[-1] == 2.0         # second take had the lowest error
     assert report.worst_error == pytest.approx(0.3) and report.failed_checks == 3
 
 

@@ -114,7 +114,8 @@ class RadioHost:
     def __init__(self, model, voice: str | None = None, *, supports_events: bool = False,
                  max_chars: int = 220, max_retries: int = 2,
                  check: Callable[[np.ndarray, int, str, str], bool | float] | None = None,
-                 max_error: float = 0.25, sentence_gap: float = 0.12):
+                 max_error: float = 0.25, sentence_gap: float = 0.12,
+                 lead_in: float = 0.0, fade_in: float = 0.008):
         self.model = model
         self.voice = voice
         self.supports_events = supports_events
@@ -123,6 +124,8 @@ class RadioHost:
         self.check = check
         self.max_error = max_error
         self.sentence_gap = sentence_gap
+        self.lead_in = lead_in      # silence before the first sound of the file
+        self.fade_in = fade_in      # ramp at the start of every generated chunk
         self.sr = int(model.sr)
         # Analyse the reference voice once, not again for every chunk.
         self._voice_prepared = False
@@ -148,6 +151,14 @@ class RadioHost:
     def _silence(self, seconds: float) -> np.ndarray:
         return np.zeros(int(round(seconds * self.sr)), dtype=np.float32)
 
+    def _faded(self, wav: np.ndarray) -> np.ndarray:
+        """The model often starts a chunk at full level; a few ms of ramp avoids a hard edge."""
+        n = min(len(wav), int(self.fade_in * self.sr))
+        if n > 1:
+            wav = wav.copy()
+            wav[:n] *= np.linspace(0.0, 1.0, n, dtype=np.float32)
+        return wav
+
     def _generate(self, text: str, lang: str, style: Style, report: RenderReport, **overrides) -> np.ndarray:
         kwargs = {**style_to_generate_kwargs(style), **overrides}
         if self.voice and not self._voice_prepared:
@@ -164,7 +175,7 @@ class RadioHost:
             wav = out.reshape(-1).astype(np.float32)
             report.generate_seconds += time.perf_counter() - started
             if self.check is None:
-                return wav
+                return self._faded(wav)
             started = time.perf_counter()
             result = self.check(wav, self.sr, text, lang)
             report.check_seconds += time.perf_counter() - started
@@ -180,7 +191,7 @@ class RadioHost:
             logger.warning("No take passed the check after %d tries, keeping the best (error %.2f): %r",
                            self.max_retries + 1, best_error, text)
         report.worst_error = max(report.worst_error, best_error)
-        return best
+        return self._faded(best)
 
     def render(self, script: str | Script, language: str | None = None, **generate_overrides):
         """Return (mono float32 audio at `self.sr`, RenderReport)."""
@@ -200,6 +211,8 @@ class RadioHost:
                     report.chunks += 1
             if segment.pause_after:
                 parts.append(self._silence(segment.pause_after))
+        if parts and self.lead_in:
+            parts.insert(0, self._silence(self.lead_in))
         wav = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
         report.duration = len(wav) / self.sr
         if parsed.fit_seconds and report.duration:

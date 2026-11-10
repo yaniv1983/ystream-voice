@@ -50,7 +50,7 @@ def main():
         from ystream_voice.training import load_adapter
         load_adapter(model.t3, args.adapter)
     check = make_check(whisper_transcriber(device="cpu", compute_type="int8")) if args.check else None
-    host = RadioHost(model, voice=args.voice, check=check)
+    host = RadioHost(model, voice=args.voice, check=check, lead_in=0.15)
     load_seconds = time.time() - started
     started = time.time()
     wav, report = host.render(script, language=args.lang)

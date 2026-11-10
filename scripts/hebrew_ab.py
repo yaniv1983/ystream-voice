@@ -12,6 +12,7 @@ import statistics
 import time
 from pathlib import Path
 
+import librosa
 import numpy as np
 import soundfile
 import torch
@@ -30,6 +31,11 @@ SETTINGS = {
     "v2_default":   ("v2", True,  {}),
     "v2_no_niqqud": ("v2", False, {}),
 }
+
+
+def voice_embedding(model, wav16k: np.ndarray) -> np.ndarray:
+    """Speaker embedding from the model's own voice encoder (expects 16 kHz audio)."""
+    return np.asarray(model.ve.embeds_from_wavs([wav16k], sample_rate=16000)).mean(axis=0)
 
 
 def main():
@@ -69,6 +75,7 @@ def main():
                 load_adapter(model.t3, adapter)
             model.prepare_conditionals(args.voice)
             loaded, loaded_adapter = weights, adapter
+            reference = voice_embedding(model, librosa.load(args.voice, sr=16000, mono=True)[0])
         hebrew.set_niqqud(niqqud)
         (out / name).mkdir(parents=True, exist_ok=True)
         started = time.time()
@@ -77,9 +84,12 @@ def main():
                 wav = model.generate(sentence, language_id=args.lang, **options)
                 wav = wav.detach().cpu().numpy().reshape(-1).astype(np.float32)
                 error = float(check(wav, model.sr, sentence, args.lang))
+                heard = voice_embedding(model, librosa.resample(wav, orig_sr=model.sr, target_sr=16000))
+                similarity = float(np.dot(heard, reference) / (np.linalg.norm(heard) * np.linalg.norm(reference)))
                 path = out / name / f"s{s + 1:02d}_take{take + 1}.wav"
                 soundfile.write(str(path), wav, model.sr, subtype="PCM_16")
                 rows.append({"setting": name, "sentence": s + 1, "take": take + 1, "error": f"{error:.3f}",
+                             "voice_similarity": f"{similarity:.3f}",
                              "seconds": f"{len(wav) / model.sr:.2f}", "file": str(path), "text": sentence})
         print(f"{name}: done in {time.time() - started:.0f} s", flush=True)
     hebrew.set_niqqud(True)
@@ -89,15 +99,17 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"\n{'setting':14} {'mean error':>10} {'perfect':>8} {'failed':>7} {'best-of-takes':>14}")
+    print(f"\n{'setting':14} {'mean error':>10} {'perfect':>8} {'failed':>7} {'best-of-takes':>14} {'voice sim':>10}")
     for name in names:
         errors = [float(r["error"]) for r in rows if r["setting"] == name]
         best = [min(float(r["error"]) for r in rows if r["setting"] == name and r["sentence"] == s + 1)
                 for s in range(len(sentences))]
         print(f"{name:14} {statistics.mean(errors):10.3f} {sum(e == 0 for e in errors):5d}/{len(errors):<2d} "
-              f"{sum(e > 0.25 for e in errors):4d}/{len(errors):<2d} {statistics.mean(best):14.3f}")
+              f"{sum(e > 0.25 for e in errors):4d}/{len(errors):<2d} {statistics.mean(best):14.3f} "
+              f"{statistics.mean(float(r['voice_similarity']) for r in rows if r['setting'] == name):10.3f}")
     print("\nerror: 0 = every word understood. failed = error above 0.25.")
     print("best-of-takes = mean error if the best take of each sentence is kept.")
+    print("voice sim: similarity of each take to the reference voice (1 = same voice), from the model's voice encoder.")
     print(f"All takes and results.csv are in {out}")
 
 

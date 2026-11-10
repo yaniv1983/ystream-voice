@@ -49,4 +49,4 @@ def test_try_voice_runs(tmp_path, monkeypatch, capsys, extra):
     printed = capsys.readouterr().out
     assert "Saved" in printed and "Time: load" in printed
     audio, sr = soundfile.read(out)
-    assert sr == 24000 and len(audio) == int(2.5 * 24000)
+    assert sr == 24000 and len(audio) == int(2.65 * 24000)   # 0.15 s lead-in + 2 chunks + 0.5 s pause
