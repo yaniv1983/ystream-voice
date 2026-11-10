@@ -43,9 +43,11 @@ def main():
         logging.getLogger("ystream_voice").setLevel(logging.INFO)
     script = args.text if args.text else Path(args.file).read_text(encoding="utf-8")
 
+    started = time.time()
     model = ChatterboxMultilingualTTS.from_pretrained(device, t3_model=args.model)
     check = make_check(whisper_transcriber(device="cpu", compute_type="int8")) if args.check else None
     host = RadioHost(model, voice=args.voice, check=check)
+    load_seconds = time.time() - started
     started = time.time()
     wav, report = host.render(script, language=args.lang)
     elapsed = time.time() - started
