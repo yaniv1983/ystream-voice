@@ -9,8 +9,8 @@ import argparse
 import time
 from pathlib import Path
 
+import soundfile
 import torch
-import torchaudio
 
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from ystream_voice import RadioHost, master, make_check, whisper_transcriber
@@ -44,7 +44,7 @@ def main():
     if not args.raw:
         wav = master(wav, host.sr)
 
-    torchaudio.save(args.out, torch.from_numpy(wav).unsqueeze(0), host.sr)
+    soundfile.write(args.out, wav, host.sr, subtype="PCM_24")
     print(f"Saved {args.out}: {report.duration:.1f} s of audio in {elapsed:.1f} s "
           f"({report.chunks} chunks, {host.sr} Hz)")
     if args.check:

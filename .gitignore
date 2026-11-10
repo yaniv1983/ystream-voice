@@ -46,3 +46,7 @@ checkpoints/
 
 # Ignore generated sample .wav files
 **/*.wav
+
+# Local voice recordings and generated audio never go into the repository
+voices/
+out/
