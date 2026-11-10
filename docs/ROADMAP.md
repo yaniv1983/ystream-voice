@@ -12,6 +12,7 @@ Goal: a Chatterbox that a station owner can clone their voice into (10-30 minute
 | 3 | Hebrew quality and mixed Hebrew/English fine-tune; per-voice add-on from 10-30 minutes | Yes | Planned |
 | 4 | Real `[laugh]`/`[breath]` sounds; exact pace, energy and pitch control; `[fit]` to a target length | Yes | Planned |
 | 5 | Streaming for live use, HTTP service | No | Planned |
+| 6 | CPU-only mode for PCs without a GPU: compressed (8-bit) model and the two-step decoder for offline rendering, then a small Hebrew + English model distilled from the full one for near-real-time speech | Yes (small model) | Planned |
 
 ## Known limits today
 
