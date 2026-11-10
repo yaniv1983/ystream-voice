@@ -50,3 +50,6 @@ checkpoints/
 # Local voice recordings and generated audio never go into the repository
 voices/
 out/
+
+# Prepared training data stays local
+data/
