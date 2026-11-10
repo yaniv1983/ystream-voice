@@ -62,8 +62,10 @@ def take_error(reference: str, heard: str, lang: str) -> float:
     Spelling variants (Hebrew full/defective spelling, "okay"/"ok") change whole
     words but few letters, so the letter-level score is allowed to rescue them.
     """
+    from .hebrew import written_form
     from .normalize import normalize_text
-    heard = normalize_text(heard, lang)
+    reference = written_form(reference)
+    heard = written_form(normalize_text(heard, lang))
     return min(word_error_rate(reference, heard), 2.0 * char_error_rate(reference, heard))
 
 
@@ -75,7 +77,8 @@ def make_check(transcribe: Callable[[np.ndarray, int, str], str], max_seconds_pe
     the script could need (babbling, a long noisy tail) scores 1.0 unheard.
     """
     def check(wav: np.ndarray, sr: int, text: str, lang: str) -> float:
-        words = comparable(text)
+        from .hebrew import written_form
+        words = comparable(written_form(text))
         if words and len(wav) / sr > max(3.0, len(words) * max_seconds_per_word):
             logger.info("Take too long for its text (%.1f s for %d words)", len(wav) / sr, len(words))
             return 1.0

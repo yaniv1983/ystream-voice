@@ -41,13 +41,13 @@ def test_detect_language():
 
 
 @pytest.mark.parametrize("text,expected", [
-    ("It's 7:30 on 99.5 FM", "It's seven thirty on ninety-nine point five FM"),
+    ("It's 7:30 on 99.5 FM", "It's seven thirty on ninety-nine point five {{FM|eff em}}"),
     ("It's 20:05", "It's eight oh five P M"),
     ("Back at 9:00", "Back at nine o'clock"),
     ("Wake up at 6:15 am", "Wake up at six fifteen A M"),
     ("A classic from 1999", "A classic from nineteen ninety-nine"),
     ("Released in 2005", "Released in two thousand five"),
-    ("138 BPM", "one hundred thirty-eight BPM"),
+    ("138 BPM", "one hundred thirty-eight {{BPM|bee pee em}}"),
     ("50% off", "fifty percent off"),
     ("The 3rd track, 21st hour", "The third track, twenty-first hour"),
     ("1,500 listeners", "one thousand five hundred listeners"),
@@ -193,3 +193,24 @@ def test_niqqud_can_be_switched_off():
         assert add_niqqud("שלום {{Tiesto|טִיֶסְטוֹ}}") == "שלום טִיֶסְטוֹ"
     finally:
         hebrew.set_niqqud(True)
+
+
+def test_acronyms_are_spelled_as_letter_names():
+    from ystream_voice.hebrew import spoken_form, written_form
+    from ystream_voice.normalize import normalize_text
+
+    out = normalize_text("You're on 99.5 FM with DJ Dana, 128 BPM", "en")
+    assert spoken_form(out) == ("You're on ninety-nine point five eff em with dee jay Dana, "
+                                "one hundred twenty-eight bee pee em")
+    assert "FM" in written_form(out) and "DJ" in written_form(out)
+    assert "אֶף אֶם" in spoken_form(normalize_text("אתם על 99.5 FM", "he"))
+
+
+def test_acronym_rule_leaves_ordinary_words_and_overrides_alone():
+    from ystream_voice.hebrew import spoken_form
+    from ystream_voice.normalize import normalize_text
+
+    assert normalize_text("I AM here, OK", "en") == "I AM here, OK"
+    assert spoken_form(normalize_text("1080 AM", "en")).endswith("ay em")
+    assert normalize_text("{{MP3|em pee three}} and 2 [pause:0.5s]", "en") == "{{MP3|em pee three}} and two [pause:0.5s]"
+    assert spoken_form(normalize_text("MP3", "en")) == "em pee three"

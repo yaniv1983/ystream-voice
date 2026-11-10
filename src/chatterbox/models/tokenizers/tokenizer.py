@@ -280,6 +280,10 @@ class MTLTokenizer:
             from ystream_voice.hebrew import has_niqqud
             if has_niqqud(txt):
                 nfkd_normalize = False
+        else:
+            # {{written|spoken}} pronunciation overrides: read the spoken part.
+            from ystream_voice.hebrew import spoken_form
+            txt = spoken_form(txt)
         txt = self.preprocess_text(txt, language_id=language_id, lowercase=lowercase, nfkd_normalize=nfkd_normalize)
         
         # Language-specific text processing

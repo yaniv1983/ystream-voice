@@ -2,7 +2,7 @@
 
 Handles clock times, decimals (FM frequencies), percentages, years, plain
 numbers and a few symbols, in English and Hebrew. Text inside square brackets
-(tags) is never touched.
+(tags) or in a {{written|spoken}} override is never touched.
 """
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from .numbers import number_to_words, digits_to_words
 _HEBREW_LETTER = re.compile(r"[א-ת]")
 _LATIN_LETTER = re.compile(r"[A-Za-z]")
 _TAG = re.compile(r"\[[^\[\]]*\]")
+# Tags and {{written|spoken}} overrides are left exactly as the script writer typed them.
+_PROTECTED = re.compile(r"\[[^\[\]]*\]|\{\{[^{}]*\}\}")
 
 _TIME = re.compile(r"(?<![\d:])([01]?\d|2[0-3]):([0-5]\d)(?![\d:])(?:\s*(am|pm|AM|PM|a\.m\.|p\.m\.)(?![A-Za-z]))?")
 _PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s?%")
@@ -28,6 +30,46 @@ _SYMBOLS = {
     "en": {"&": " and ", "@": " at ", "+": " plus ", "#": " number "},
     "he": {"&": " ו", "@": " שטרודל ", "+": " פלוס ", "#": " מספר "},
 }
+
+# Letter-by-letter abbreviations common in radio copy. The model tends to garble
+# bare capitals ("FM" came out as "MA"), so they are handed over as letter names
+# through a {{written|spoken}} override; the take checker still expects "FM".
+ACRONYMS = {"FM", "DJ", "MC", "TV", "UK", "USA", "BPM", "CD", "DVD", "VIP", "EP", "LP", "HD", "AI",
+            "ID", "DAB", "MP3", "SMS", "BBC", "MTV", "NYC", "LA", "EDM", "RNB"}
+_LETTER_NAMES = {
+    "en": dict(zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ", (
+        "ay bee see dee ee eff gee aitch eye jay kay el em en oh pee cue ar ess tee you vee "
+        "double-you ex why zee").split())),
+    "he": dict(zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ", (
+        "אֵיי בִּי סִי דִּי אִי אֶף גִ'י אֵייץ' אַיי גֵ'יי קֵיי אֶל אֶם אֶן אוֹ פִּי קְיוּ אַר אֶס טִי יוּ וִי "
+        "דַּאבֶּלְיוּ אֶקְס וַואי זִי").split())),
+}
+_ACRONYM = re.compile(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9]{1,3}(?![A-Za-z0-9])")
+
+
+def spell_acronym(word: str, lang: str) -> str:
+    """'FM' -> 'eff em' (or Hebrew letter names with niqqud). Digits are spelled as numbers."""
+    names = _LETTER_NAMES[lang]
+    return " ".join(names[ch] if ch in names else number_to_words(int(ch), lang) for ch in word)
+
+
+def _mark_acronyms(text: str, lang: str) -> str:
+    def mark(m):
+        word = m[0]
+        # "AM" is a radio band only after a frequency ("1080 AM"); otherwise it is a shouted "am".
+        known = word in ACRONYMS or (word == "AM" and re.search(r"\d\s?$", text[:m.start()]))
+        return f"{{{{{word}|{spell_acronym(word, lang)}}}}}" if known else word
+    return _ACRONYM.sub(mark, text)
+
+
+def _split_protected(text: str):
+    """Yield (piece, is_protected) for tags and {{written|spoken}} overrides."""
+    pos = 0
+    for m in _PROTECTED.finditer(text):
+        yield text[pos:m.start()], False
+        yield m.group(0), True
+        pos = m.end()
+    yield text[pos:], False
 
 
 def detect_language(text: str) -> str:
@@ -124,10 +166,8 @@ def _normalize_plain(text: str, lang: str) -> str:
 def normalize_text(text: str, lang: str | None = None) -> str:
     """Spell out numbers, times and symbols. Tags in [brackets] pass through untouched."""
     lang = lang or detect_language(text)
-    out, pos = [], 0
-    for tag in _TAG.finditer(text):
-        out.append(_normalize_plain(text[pos:tag.start()], lang))
-        out.append(tag.group(0))
-        pos = tag.end()
-    out.append(_normalize_plain(text[pos:], lang))
+    marked = "".join(piece if protected else _mark_acronyms(piece, lang)
+                     for piece, protected in _split_protected(text))
+    out = [piece if protected else _normalize_plain(piece, lang)
+           for piece, protected in _split_protected(marked)]
     return re.sub(r"[ \t]{2,}", " ", "".join(out)).strip()
