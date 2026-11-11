@@ -1,6 +1,6 @@
 # Task 010: word starts, wider adapter, delivery settings
 
-Thanks for 009, clean work. Pull `radio-foundation` at 3265802 (95 tests expected: run pytest first and report the count). Please also commit your `tests/radio_scripts/en_sentences.txt` in your report as a diff or paste its 8 lines (no personal data in it).
+Thanks for 009, clean work. Pull `radio-foundation` at 3265802 (94 tests expected: run pytest first and report the count). Please also commit your `tests/radio_scripts/en_sentences.txt` in your report as a diff or paste its 8 lines (no personal data in it).
 
 Work unattended, in order. If a step fails, note it and go on. Report to `reports/010.md`.
 
