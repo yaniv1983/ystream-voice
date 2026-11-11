@@ -86,3 +86,35 @@ def test_flag_rows():
     ]
     flag_rows(rows)
     assert [r["flag"] for r in rows] == ["short", "retake", "", "stutter", "cut-off", "", ""]
+
+
+def test_flag_mismatches_marks_clips_that_do_not_say_their_text(tmp_path):
+    import csv
+
+    import numpy as np
+    import soundfile
+
+    from ystream_voice.dataset import flag_mismatches
+
+    (tmp_path / "clips").mkdir()
+    rows = [("clips/a.wav", "good morning and welcome"), ("clips/b.wav", "the news is next"),
+            ("clips/c.wav", "already flagged")]
+    for clip, _ in rows:
+        soundfile.write(str(tmp_path / clip), np.zeros(1600, dtype=np.float32), 16000)
+    with (tmp_path / "metadata.csv").open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["clip", "language", "text", "flag"])
+        writer.writeheader()
+        for i, (clip, text) in enumerate(rows):
+            writer.writerow({"clip": clip, "language": "en", "text": text, "flag": "short" if i == 2 else ""})
+    heard = iter(["Good morning, and welcome.", "music playing loudly"])
+    calls = []
+
+    def transcribe(wav, sr, lang):
+        calls.append(lang)
+        return next(heard)
+
+    assert flag_mismatches(tmp_path, transcribe) == (2, 1)
+    with (tmp_path / "metadata.csv").open(encoding="utf-8-sig", newline="") as f:
+        flags = {r["clip"]: r["flag"] for r in csv.DictReader(f)}
+    assert flags == {"clips/a.wav": "", "clips/b.wav": "mismatch", "clips/c.wav": "short"}
+    assert flag_mismatches(tmp_path, transcribe) == (0, 0)   # resumable: nothing is checked twice

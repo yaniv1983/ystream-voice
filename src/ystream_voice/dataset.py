@@ -189,3 +189,51 @@ def prepare_dataset(files: list[Path], out_dir: Path, language: str,
         writer.writeheader()
         writer.writerows(kept + rows)
     return rows
+
+
+def flag_mismatches(folder, transcribe, max_error: float = 0.15, log=None) -> tuple[int, int]:
+    """Flag clips whose audio does not say what their text says.
+
+    For datasets that come with their own captions (crowd or web sources): each
+    unflagged clip is transcribed and compared with its text; clips above
+    `max_error` get the flag "mismatch" (noise, music, wrong or loose captions).
+    `transcribe(wav, sr, lang) -> str`. Returns (checked, flagged). The file is
+    rewritten every 200 clips, so an interrupted run can be resumed.
+    """
+    import soundfile
+    from .verify import take_error
+
+    folder = Path(folder)
+    meta = folder / "metadata.csv"
+    with meta.open(encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        fields = list(reader.fieldnames)
+        rows = list(reader)
+    if "checked" not in fields:
+        fields.append("checked")
+
+    def write():
+        with meta.open("w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fields, restval="")
+            writer.writeheader()
+            writer.writerows(rows)
+
+    checked = flagged = 0
+    for row in rows:
+        if row.get("flag") or row.get("checked"):
+            continue
+        wav, sr = soundfile.read(str(folder / row["clip"]), dtype="float32", always_2d=False)
+        if wav.ndim > 1:
+            wav = wav.mean(axis=1)
+        error = take_error(row["text"], transcribe(wav, sr, row["language"]), row["language"])
+        row["checked"] = f"{error:.2f}"
+        if error > max_error:
+            row["flag"] = "mismatch"
+            flagged += 1
+        checked += 1
+        if checked % 200 == 0:
+            write()
+            if log:
+                log(f"  checked {checked}, flagged {flagged}")
+    write()
+    return checked, flagged
