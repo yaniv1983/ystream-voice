@@ -13,6 +13,7 @@ from .models.t3 import T3
 from .models.t3.modules.t3_config import T3Config
 from .models.s3tokenizer import S3_SR, S3_TOKEN_RATE, drop_invalid_tokens
 from .models.s3gen import S3GEN_SR, S3Gen
+from .models.s3gen.const import S3GEN_SIL
 from .models.tokenizers import MTLTokenizer
 from .models.voice_encoder import VoiceEncoder
 from .models.t3.modules.cond_enc import T3Cond
@@ -289,6 +290,7 @@ class ChatterboxMultilingualTTS:
         min_p=0.05,
         top_p=1.0,
         max_new_tokens=1000,
+        lead_silence_tokens=3,
     ):
         # Validate language_id
         if language_id and language_id.lower() not in SUPPORTED_LANGUAGES:
@@ -340,6 +342,14 @@ class ChatterboxMultilingualTTS:
             # TODO: output becomes 1D
             speech_tokens = drop_invalid_tokens(speech_tokens)
             speech_tokens = speech_tokens.to(self.device)
+            # The decoder mutes its first 20 ms and fades the next 20 ms to hide
+            # spill from the reference clip, which clips the first consonant when
+            # speech starts at once. A few silence tokens (40 ms each) give that
+            # fade something harmless to land on.
+            if lead_silence_tokens:
+                silence = torch.full((int(lead_silence_tokens),), S3GEN_SIL, dtype=speech_tokens.dtype,
+                                     device=speech_tokens.device)
+                speech_tokens = torch.cat([silence, speech_tokens])
 
             wav, _ = self.s3gen.inference(
                 speech_tokens=speech_tokens,
