@@ -85,6 +85,45 @@ def style_to_generate_kwargs(style: Style) -> dict:
     }
 
 
+def clean_start(wav: np.ndarray, sr: int, keep: float = 0.03, floor_db: float = 35.0,
+                max_blip: float = 0.12, min_gap: float = 0.05) -> np.ndarray:
+    """Cut what the model emits before the first real speech of a take.
+
+    Takes often open with a click, a puff or a fragment of the reference voice,
+    then a short gap, then the text. Leading bursts shorter than `max_blip` that
+    are followed by at least `min_gap` of quiet are dropped together with the
+    silence before the speech; `keep` seconds are left ahead of the first sound
+    so soft consonants survive.
+    """
+    hop = max(1, int(0.01 * sr))
+    frames = len(wav) // hop
+    if frames < 10:
+        return wav
+    level = np.sqrt((wav[: frames * hop].reshape(frames, hop) ** 2).mean(axis=1) + 1e-12)
+    active = 20 * np.log10(level / (level.max() + 1e-12)) > -floor_db
+    runs, i = [], 0
+    while i < frames:
+        if active[i]:
+            j = i
+            while j < frames and active[j]:
+                j += 1
+            runs.append((i, j))
+            i = j
+        else:
+            i += 1
+    k = 0
+    while k + 1 < len(runs):
+        start, end = runs[k]
+        if (end - start) * 0.01 <= max_blip and (runs[k + 1][0] - end) * 0.01 >= min_gap:
+            k += 1
+        else:
+            break
+    if not runs:
+        return wav
+    cut = max(0, runs[k][0] * hop - int(keep * sr))
+    return wav[cut:]
+
+
 @dataclass
 class RenderReport:
     chunks: int = 0
@@ -116,7 +155,7 @@ class RadioHost:
                  check: Callable[[np.ndarray, int, str, str], bool | float] | None = None,
                  max_error: float = 0.25, sentence_gap: float = 0.12,
                  lead_in: float = 0.0, fade_in: float = 0.008,
-                 options: dict | None = None):
+                 options: dict | None = None, trim_start: bool = True):
         self.model = model
         self.voice = voice
         self.supports_events = supports_events
@@ -127,6 +166,7 @@ class RadioHost:
         self.sentence_gap = sentence_gap
         self.lead_in = lead_in      # silence before the first sound of the file
         self.fade_in = fade_in      # ramp at the start of every generated chunk
+        self.trim_start = trim_start   # drop clicks and silence the model emits before the speech
         self.options = dict(options or {})   # extra generate() settings, e.g. {"temperature": 0.6}
         self.sr = int(model.sr)
         # Analyse the reference voice once, not again for every chunk.
@@ -155,6 +195,8 @@ class RadioHost:
 
     def _faded(self, wav: np.ndarray) -> np.ndarray:
         """The model often starts a chunk at full level; a few ms of ramp avoids a hard edge."""
+        if self.trim_start:
+            wav = clean_start(wav, self.sr)
         n = min(len(wav), int(self.fade_in * self.sr))
         if n > 1:
             wav = wav.copy()

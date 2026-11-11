@@ -53,3 +53,26 @@ def test_make_check_scores_wrong_words_and_runaway_length():
     assert check(good, 24000, "Stay tuned for more music.", "en") == 0
     assert check(good, 24000, "Something else entirely here.", "en") > 0.6
     assert check(np.zeros(24000 * 30, dtype=np.float32), 24000, "Stay tuned for more music.", "en") == 1.0
+
+
+def test_clean_start_drops_a_click_before_the_speech_but_keeps_soft_onsets():
+    import numpy as np
+
+    from ystream_voice.longform import clean_start
+
+    sr = 24000
+    t = np.arange(sr) / sr
+    speech = (0.3 * np.sin(2 * np.pi * 150 * t)).astype(np.float32)
+    silence = np.zeros(int(0.2 * sr), dtype=np.float32)
+    click = (0.3 * np.sin(2 * np.pi * 900 * t[: int(0.04 * sr)])).astype(np.float32)
+
+    out = clean_start(np.concatenate([silence, click, silence, speech]), sr)
+    assert abs(len(out) - (len(speech) + int(0.03 * sr))) <= sr // 100     # click and silences gone
+
+    plain = clean_start(np.concatenate([silence, speech]), sr)
+    assert abs(len(plain) - (len(speech) + int(0.03 * sr))) <= sr // 100
+
+    # A soft consonant (20 dB below the vowel) right before the vowel is speech, not a click.
+    soft = (0.03 * np.sin(2 * np.pi * 3000 * t[: int(0.08 * sr)])).astype(np.float32)
+    kept = clean_start(np.concatenate([silence, soft, speech]), sr)
+    assert len(kept) >= len(soft) + len(speech)

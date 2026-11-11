@@ -48,6 +48,16 @@ def spoken_form(text: str) -> str:
     return _OVERRIDE.sub(lambda m: m.group(2), text)
 
 
+# "And" before a consonant with shva, or before bet / mem / pe, is read "u", not "ve"
+# (ushloshim, umuzika). Diacritizers usually write "ve" everywhere.
+_VAV_SHVA = re.compile("(?<![\u0590-\u05FF])\u05D5\u05B0(?=[\u05D1\u05DE\u05E4]|[\u05D0-\u05D4\u05D6-\u05D8\u05DA-\u05EA][\u05BC\u05C1\u05C2]*\u05B0)")
+
+
+def fix_vav(text: str) -> str:
+    """Turn the prefix "ve" into "u" where Hebrew grammar asks for it (niqqud text)."""
+    return _VAV_SHVA.sub("\u05D5\u05BC", text)
+
+
 class HebrewDiacritizerUnavailable(RuntimeError):
     pass
 
@@ -114,7 +124,10 @@ def add_niqqud(text: str, diacritize=None) -> str:
     """
     if not _enabled and diacritize is None:
         return spoken_form(text)
-    diacritize = diacritize or _diacritize
+    base = diacritize or _diacritize
+
+    def diacritize(piece):
+        return fix_vav(base(piece))
     try:
         out, pos = [], 0
         for m in _OVERRIDE.finditer(text):

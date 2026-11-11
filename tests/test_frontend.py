@@ -214,3 +214,13 @@ def test_acronym_rule_leaves_ordinary_words_and_overrides_alone():
     assert spoken_form(normalize_text("1080 AM", "en")).endswith("ay em")
     assert normalize_text("{{MP3|em pee three}} and 2 [pause:0.5s]", "en") == "{{MP3|em pee three}} and two [pause:0.5s]"
     assert spoken_form(normalize_text("MP3", "en")) == "em pee three"
+
+
+def test_vav_prefix_is_read_u_before_shva_and_bet_mem_pe():
+    from ystream_voice.hebrew import add_niqqud, fix_vav
+
+    assert fix_vav("שֶׁבַע וְשְׁלוֹשִׁים") == "שֶׁבַע וּשְׁלוֹשִׁים"      # ushloshim
+    assert fix_vav("וְמוּזִיקָה") == "וּמוּזִיקָה"                    # umuzika
+    assert fix_vav("וְעַכְשָׁיו") == "וְעַכְשָׁיו"                    # ve'achshav stays
+    assert fix_vav("תִּקְוְמוּ") == "תִּקְוְמוּ"                      # only a prefix, never inside a word
+    assert add_niqqud("x", diacritize=lambda t: "וְשְׁלוֹשִׁים") == "וּשְׁלוֹשִׁים"
